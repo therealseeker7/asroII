@@ -5,7 +5,7 @@ import * as THREE from 'three';
 import { useAstroPsyche } from './hooks/useAstroPsyche';
 import { useAuth } from './hooks/useAuth';
 import { AuthModal } from './components/AuthModal';
-import { ConversationalQuestionnaire } from './components/ConversationalQuestionnaire';
+import { PsychologicalQuestionnaire } from './components/PsychologicalQuestionnaire';
 import { ThemedDatePicker, ThemedTimePicker } from './components/DateTimePickers';
 import { generatePDF, shareReport } from './services/reportService';
 import { isDemoMode } from './lib/supabase';
@@ -244,7 +244,7 @@ const ThreeBackground = ({ appStep, formStep }) => {
             0,  // Venus - Form Step 0
             1,  // Earth - Form Step 1 
             2,  // Mars - Form Step 2
-            3,  // Jupiter - Conversational Q&A
+            3,  // Jupiter - Psychological Q&A
             4,  // Saturn - Final Report
         ];
         
@@ -382,7 +382,7 @@ const LandingPage = ({ onNext, onShowAuth }) => {
                 transition={{ delay: 0.8, duration: 1 }}
                 className="text-base sm:text-lg md:text-xl text-white/70 mb-8 sm:mb-12 max-w-md px-4"
             >
-                "Discover your cosmic blueprint through AI-powered conversation..."
+                "Discover your cosmic blueprint through psychological insights..."
             </motion.p>
             <PrimaryButton onClick={onShowAuth}>
                 Begin Your Journey
@@ -538,7 +538,7 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
             </div>
             <div className="mt-6 sm:mt-8 flex flex-col items-center">
                 <PrimaryButton onClick={handleSubmit} disabled={loading || isLoading}>
-                    {loading || isLoading ? 'Creating Profile...' : 'Start Conversation'}
+                    {loading || isLoading ? 'Creating Profile...' : 'Start Assessment'}
                 </PrimaryButton>
                 <p className="text-xs text-white/40 mt-2">Press Enter to continue</p>
             </div>
@@ -576,10 +576,10 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
     );
 };
 
-const ConversationalQAPage = ({ onNext, user }) => {
+const PsychologicalQAPage = ({ onNext, user }) => {
     const { generateReport, isLoading } = useAstroPsyche();
 
-    const handleConversationComplete = async (extractedData: Record<string, any>) => {
+    const handleAssessmentComplete = async (extractedData: Record<string, any>) => {
         try {
             await generateReport(extractedData);
             onNext();
@@ -604,9 +604,10 @@ const ConversationalQAPage = ({ onNext, user }) => {
     }
 
     return (
-        <ConversationalQuestionnaire
+        <PsychologicalQuestionnaire
             userId={user.id}
-            onComplete={handleConversationComplete}
+            userName={user.full_name}
+            onComplete={handleAssessmentComplete}
         />
     );
 };
@@ -685,7 +686,7 @@ const FinalReportPage = ({ onRestart, user }) => {
                 <div className="text-center">
                     <Sparkles className="animate-spin mx-auto mb-4" size={48} />
                     <p className="text-lg">Weaving your cosmic blueprint...</p>
-                    <p className="text-sm text-white/60 mt-2">Integrating conversation insights</p>
+                    <p className="text-sm text-white/60 mt-2">Integrating psychological insights</p>
                 </div>
             </motion.div>
         );
@@ -818,7 +819,7 @@ export default function App() {
     const pages = [
         <LandingPage key="landing" onNext={nextAppStep} onShowAuth={() => setShowAuthModal(true)} />,
         <BirthDataPage key="birth-data" onNext={nextAppStep} formStep={formStep} setFormStep={setFormStep} backgroundRef={backgroundRef} user={authUser} />,
-        <ConversationalQAPage key="conversational-qa" onNext={nextAppStep} user={appUser} />,
+        <PsychologicalQAPage key="psychological-qa" onNext={nextAppStep} user={appUser} />,
         <FinalReportPage key="final-report" onRestart={restart} user={appUser} />
     ];
 
