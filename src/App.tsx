@@ -5,12 +5,14 @@ import * as THREE from 'three';
 import { useAstroPsyche } from './hooks/useAstroPsyche';
 import { useAuth } from './hooks/useAuth';
 import { AuthModal } from './components/AuthModal';
-import { PsychologicalQuestionnaire } from './components/PsychologicalQuestionnaire';
+import { EnhancedPsychQuestionnaire } from './components/EnhancedPsychQuestionnaire';
+import { EnhancedFinalReport } from './components/EnhancedFinalReport';
 import { ThemedDatePicker, ThemedTimePicker } from './components/DateTimePickers';
 import { generatePDF, shareReport } from './services/reportService';
+import { geminiAI, type EnhancedReport } from './services/geminiAI';
+import { enhancedAstrology } from './services/enhancedAstrology';
 import { isDemoMode } from './lib/supabase';
-import type { BirthData } from './services/astrologyService';
-import type { FinalReport } from './lib/supabase';
+import type { BirthData } from './services/enhancedAstrology';
 
 // --- 3D Background Component (unchanged) ---
 const ThreeBackground = ({ appStep, formStep }) => {
@@ -382,7 +384,7 @@ const LandingPage = ({ onNext, onShowAuth }) => {
                 transition={{ delay: 0.8, duration: 1 }}
                 className="text-base sm:text-lg md:text-xl text-white/70 mb-8 sm:mb-12 max-w-md px-4"
             >
-                "Discover your cosmic blueprint through psychological insights..."
+                "Discover your cosmic blueprint through AI-powered psychological insights..."
             </motion.p>
             <PrimaryButton onClick={onShowAuth}>
                 Begin Your Journey
@@ -401,7 +403,7 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
         locationInput: ''
     });
     const [loading, setLoading] = useState(false);
-    const { createUser, isLoading, error } = useAstroPsyche();
+    const [error, setError] = useState(null);
 
     const nextFormStep = () => setFormStep(prev => prev + 1);
 
@@ -432,6 +434,8 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
 
     const handleSubmit = async () => {
         setLoading(true);
+        setError(null);
+        
         if (backgroundRef?.current?.startLoading) {
             backgroundRef.current.startLoading();
         }
@@ -447,7 +451,14 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
                 timezone: 'UTC'
             };
 
-            await createUser(birthData);
+            // Generate enhanced astrology chart
+            const astrologyData = await enhancedAstrology.generateEnhancedChart(birthData);
+            
+            // Save astrology report
+            await enhancedAstrology.saveAstrologyReport(user.id, birthData, astrologyData);
+            
+            // Store birth data for next step
+            localStorage.setItem('astropsyche_birth_data', JSON.stringify(birthData));
             
             setTimeout(() => {
                 if (backgroundRef?.current?.stopLoading) {
@@ -457,7 +468,8 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
                 onNext();
             }, 2000);
         } catch (error) {
-            console.error('Failed to create user:', error);
+            console.error('Failed to process birth data:', error);
+            setError('Failed to process birth data. Please try again.');
             setLoading(false);
             if (backgroundRef?.current?.stopLoading) {
                 backgroundRef.current.stopLoading();
@@ -537,8 +549,8 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
                 <p className="text-white/80 text-sm sm:text-base">Location: {formData.location?.name}</p>
             </div>
             <div className="mt-6 sm:mt-8 flex flex-col items-center">
-                <PrimaryButton onClick={handleSubmit} disabled={loading || isLoading}>
-                    {loading || isLoading ? 'Creating Profile...' : 'Start Assessment'}
+                <PrimaryButton onClick={handleSubmit} disabled={loading}>
+                    {loading ? 'Creating Profile...' : 'Start Assessment'}
                 </PrimaryButton>
                 <p className="text-xs text-white/40 mt-2">Press Enter to continue</p>
             </div>
@@ -550,17 +562,12 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
         </motion.div>
     ];
 
-    if (loading || isLoading) {
+    if (loading) {
         return (
             <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="h-full w-full flex flex-col items-center justify-center text-white p-4">
                 <Sparkles className="animate-spin mb-4" size={48} />
                 <p className="mt-8 text-lg text-white/80 text-center">Setting up your cosmic profile...</p>
                 <p className="text-sm text-white/60 mt-2 text-center">Calculating astrological chart</p>
-                {error && (
-                    <div className="mt-4 p-3 bg-red-500/20 border border-red-500/30 rounded-lg max-w-md mx-4">
-                        <p className="text-red-300 text-sm">{error}</p>
-                    </div>
-                )}
             </motion.div>
         );
     }
@@ -577,16 +584,57 @@ const BirthDataPage = ({ onNext, formStep, setFormStep, backgroundRef, user }) =
 };
 
 const PsychologicalQAPage = ({ onNext, user }) => {
-    const { generateReport, isLoading } = useAstroPsyche();
+    const [enhancedReport, setEnhancedReport] = useState<EnhancedReport | null>(null);
+    const [isGenerating, setIsGenerating] = useState(false);
 
     const handleAssessmentComplete = async (extractedData: Record<string, any>) => {
+        setIsGenerating(true);
+        
         try {
-            await generateReport(extractedData);
-            onNext();
+            // Get birth data from localStorage
+            const birthDataStr = localStorage.getItem('astropsyche_birth_data');
+            const birthData = birthDataStr ? JSON.parse(birthDataStr) : {};
+            
+            // Get astrology data
+            const astrologyData = await enhancedAstrology.generateEnhancedChart(birthData);
+            
+            // Generate enhanced report with Gemini AI
+            const report = await geminiAI.generateEnhancedReport(
+                extractedData.psych_profile,
+                astrologyData,
+                { ...birthData, gender: extractedData.gender }
+            );
+            
+            setEnhancedReport(report);
+            
+            // Save to localStorage as backup
+            localStorage.setItem('astropsyche_enhanced_report', JSON.stringify(report));
+            
+            setTimeout(() => {
+                setIsGenerating(false);
+                onNext();
+            }, 2000);
         } catch (error) {
-            console.error('Failed to generate report:', error);
+            console.error('Failed to generate enhanced report:', error);
+            setIsGenerating(false);
         }
     };
+
+    if (isGenerating) {
+        return (
+            <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="h-full w-full flex items-center justify-center text-white p-4"
+            >
+                <div className="text-center">
+                    <Sparkles className="animate-spin mx-auto mb-4" size={48} />
+                    <p className="text-lg">Weaving your cosmic blueprint...</p>
+                    <p className="text-sm text-white/60 mt-2">Integrating AI psychological insights with astrological influences</p>
+                </div>
+            </motion.div>
+        );
+    }
 
     if (!user) {
         return (
@@ -603,31 +651,42 @@ const PsychologicalQAPage = ({ onNext, user }) => {
         );
     }
 
+    // Get birth data for the questionnaire
+    const birthDataStr = localStorage.getItem('astropsyche_birth_data');
+    const birthData = birthDataStr ? JSON.parse(birthDataStr) : {};
+
     return (
-        <PsychologicalQuestionnaire
+        <EnhancedPsychQuestionnaire
             userId={user.id}
-            userName={user.full_name}
+            userName={birthData.name || user.user_metadata?.full_name || 'User'}
+            birthData={birthData}
             onComplete={handleAssessmentComplete}
         />
     );
 };
 
-const FinalReportPage = ({ onRestart, user }) => {
-    const [report, setReport] = useState<FinalReport | null>(null);
-    const [isGenerating, setIsGenerating] = useState(true);
-    const { currentReport, downloadPDF } = useAstroPsyche();
+const FinalReportPage = ({ onRestart }) => {
+    const [report, setReport] = useState<EnhancedReport | null>(null);
+    const [isLoading, setIsLoading] = useState(true);
 
     useEffect(() => {
-        if (currentReport) {
-            setReport(currentReport);
-            setIsGenerating(false);
+        // Load report from localStorage
+        const reportStr = localStorage.getItem('astropsyche_enhanced_report');
+        if (reportStr) {
+            try {
+                const parsedReport = JSON.parse(reportStr);
+                setReport(parsedReport);
+            } catch (error) {
+                console.error('Failed to parse stored report:', error);
+            }
         }
-    }, [currentReport]);
+        setIsLoading(false);
+    }, []);
 
     const handleDownloadPDF = async () => {
         if (!report) return;
         try {
-            const pdfUrl = await downloadPDF(report.id);
+            const pdfUrl = await generatePDF(report);
             if (pdfUrl) {
                 const link = document.createElement('a');
                 link.href = pdfUrl;
@@ -642,11 +701,11 @@ const FinalReportPage = ({ onRestart, user }) => {
     const handleShare = async () => {
         if (!report) return;
         try {
-            const shareUrl = await shareReport(report.id);
+            const shareUrl = await shareReport(report);
             if (navigator.share) {
                 await navigator.share({
                     title: 'My Cosmic Blueprint - AstroPsyche',
-                    text: `I just discovered I'm "${report.archetype_name}" - ${report.inspirational_line}`,
+                    text: `I just discovered my cosmic blueprint through AI-powered psychological analysis!`,
                     url: shareUrl
                 });
             } else {
@@ -655,7 +714,6 @@ const FinalReportPage = ({ onRestart, user }) => {
             }
         } catch (error) {
             console.error('Failed to share:', error);
-            // Fallback - just copy a demo URL
             const demoUrl = `${window.location.origin}/shared/demo-${Date.now()}`;
             await navigator.clipboard.writeText(demoUrl);
             alert('Demo share link copied to clipboard!');
@@ -676,7 +734,7 @@ const FinalReportPage = ({ onRestart, user }) => {
         return () => window.removeEventListener('keydown', handleKeyPress);
     }, [onRestart, report]);
 
-    if (isGenerating || !report) {
+    if (isLoading || !report) {
         return (
             <motion.div
                 initial={{ opacity: 0 }}
@@ -685,87 +743,19 @@ const FinalReportPage = ({ onRestart, user }) => {
             >
                 <div className="text-center">
                     <Sparkles className="animate-spin mx-auto mb-4" size={48} />
-                    <p className="text-lg">Weaving your cosmic blueprint...</p>
-                    <p className="text-sm text-white/60 mt-2">Integrating psychological insights</p>
+                    <p className="text-lg">Loading your cosmic blueprint...</p>
                 </div>
             </motion.div>
         );
     }
 
     return (
-        <motion.div
-            initial={{ opacity: 0, scale: 1.1 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.7 }}
-            className="h-full w-full flex items-center justify-center p-4 text-white"
-        >
-            <GlassPanel className="w-full max-w-4xl p-4 sm:p-6 md:p-8 flex flex-col max-h-[90vh]">
-                <h2 className="text-2xl sm:text-3xl font-bold text-center mb-4 sm:mb-6 bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-blue-300 px-4">
-                    Your Cosmic Blueprint
-                </h2>
-                
-                <div className="flex-grow overflow-y-auto space-y-4 sm:space-y-6 p-2" style={{maxHeight: '60vh'}}>
-                    <div className="px-2">
-                        <h3 className="font-bold text-lg sm:text-xl text-purple-300 mb-2">Archetype: {report.archetype_name}</h3>
-                        {report.inspirational_line && (
-                            <p className="text-white/80 italic text-sm sm:text-base">"{report.inspirational_line}"</p>
-                        )}
-                    </div>
-                    <div className="px-2">
-                        <h3 className="font-bold text-lg sm:text-xl text-purple-300 mb-2">Core Insights</h3>
-                        <p className="text-white/90 leading-relaxed text-sm sm:text-base">{report.summary_detailed}</p>
-                    </div>
-                    {report.astrology_breakdown && (
-                        <div className="px-2">
-                            <h3 className="font-bold text-lg sm:text-xl text-purple-300 mb-2">Astrological Foundation</h3>
-                            <p className="text-white/90 leading-relaxed text-sm sm:text-base">{report.astrology_breakdown}</p>
-                        </div>
-                    )}
-                    {report.psychology_insights && (
-                        <div className="px-2">
-                            <h3 className="font-bold text-lg sm:text-xl text-purple-300 mb-2">Psychological Patterns</h3>
-                            <p className="text-white/90 leading-relaxed text-sm sm:text-base">{report.psychology_insights}</p>
-                        </div>
-                    )}
-                    {report.mind_vs_heart && (
-                        <div className="px-2">
-                            <h3 className="font-bold text-lg sm:text-xl text-purple-300 mb-2">Mind vs. Heart</h3>
-                            <p className="text-white/90 leading-relaxed text-sm sm:text-base">{report.mind_vs_heart}</p>
-                        </div>
-                    )}
-                    {report.affirmations && (
-                        <div className="px-2">
-                            <h3 className="font-bold text-lg sm:text-xl text-purple-300 mb-2">Personal Affirmations</h3>
-                            <p className="text-white/90 leading-relaxed italic text-sm sm:text-base">{report.affirmations}</p>
-                        </div>
-                    )}
-                </div>
-
-                <motion.div 
-                    initial={{ y: 50, opacity: 0 }}
-                    animate={{ y: 0, opacity: 1 }}
-                    transition={{ delay: 0.5, type: "spring", stiffness: 100 }}
-                    className="mt-6 sm:mt-8 flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-4 px-4"
-                >
-                    <button 
-                        onClick={handleDownloadPDF}
-                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 sm:px-6 py-3 bg-blue-500/80 text-white font-semibold rounded-full transition-all duration-300 hover:bg-blue-500 shadow-lg hover:scale-105 text-sm sm:text-base"
-                    >
-                        <Download size={18} /> Download PDF
-                    </button>
-                    <button 
-                        onClick={handleShare}
-                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 sm:px-6 py-3 bg-transparent border border-white/30 text-white font-semibold rounded-full transition-all duration-300 hover:bg-white/10 shadow-lg hover:scale-105 text-sm sm:text-base"
-                    >
-                        <Share2 size={18} /> Share
-                    </button>
-                </motion.div>
-                <div className="mt-4 sm:mt-6 text-center px-4">
-                    <button onClick={onRestart} className="text-white/50 hover:text-white transition text-sm sm:text-base">Start Over</button>
-                    <p className="text-xs text-white/40 mt-2 hidden sm:block">Press D to download • S to share • R to restart</p>
-                </div>
-            </GlassPanel>
-        </motion.div>
+        <EnhancedFinalReport
+            reportData={report}
+            onRestart={onRestart}
+            onDownloadPDF={handleDownloadPDF}
+            onShare={handleShare}
+        />
     );
 };
 
@@ -775,7 +765,7 @@ export default function App() {
     const [formStep, setFormStep] = useState(0);
     const [showAuthModal, setShowAuthModal] = useState(false);
     const backgroundRef = useRef(null);
-    const { user: appUser, connectionStatus, checkConnection } = useAstroPsyche();
+    const { connectionStatus, checkConnection } = useAstroPsyche();
     const { user: authUser, loading: authLoading, signOut } = useAuth();
     const isDemo = isDemoMode();
 
@@ -787,6 +777,9 @@ export default function App() {
     const restart = () => {
         setAppStep(0);
         setFormStep(0);
+        // Clear stored data
+        localStorage.removeItem('astropsyche_birth_data');
+        localStorage.removeItem('astropsyche_enhanced_report');
     };
 
     const handleAuthSuccess = () => {
@@ -819,8 +812,8 @@ export default function App() {
     const pages = [
         <LandingPage key="landing" onNext={nextAppStep} onShowAuth={() => setShowAuthModal(true)} />,
         <BirthDataPage key="birth-data" onNext={nextAppStep} formStep={formStep} setFormStep={setFormStep} backgroundRef={backgroundRef} user={authUser} />,
-        <PsychologicalQAPage key="psychological-qa" onNext={nextAppStep} user={appUser} />,
-        <FinalReportPage key="final-report" onRestart={restart} user={appUser} />
+        <PsychologicalQAPage key="psychological-qa" onNext={nextAppStep} user={authUser} />,
+        <FinalReportPage key="final-report" onRestart={restart} />
     ];
 
     return (
